@@ -237,6 +237,7 @@ async def download_csv_file(files: List[UploadFile] = File(...)):
     all_records = []
     processed_count = 0
     error_count = 0
+    total_amount = 0.0
 
     for file in files:
         if file.filename.endswith('.pdf'):
@@ -255,6 +256,14 @@ async def download_csv_file(files: List[UploadFile] = File(...)):
             detail=f"Nessun dato estratto. File processati: {processed_count}, Errori: {error_count}"
         )
 
+    # Calcola totale importo da tutti i record
+    for record in all_records:
+        try:
+            amount = float(record.get("Importo_Totale", 0))
+            total_amount += amount
+        except (ValueError, TypeError):
+            continue
+
     # Genera CSV
     output = io.StringIO()
     fieldnames = [
@@ -272,7 +281,7 @@ async def download_csv_file(files: List[UploadFile] = File(...)):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"beebus_rifornimenti_{timestamp}.csv"
 
-    # Restituisci come file scaricabile
+    # Restituisci come file scaricabile con metadati negli header
     return StreamingResponse(
         io.BytesIO(csv_content.encode('utf-8')),
         media_type="text/csv; charset=utf-8",
@@ -280,7 +289,8 @@ async def download_csv_file(files: List[UploadFile] = File(...)):
             "Content-Disposition": f"attachment; filename={filename}",
             "X-Total-Records": str(len(all_records)),
             "X-Processed-Files": str(processed_count),
-            "X-Errors": str(error_count)
+            "X-Errors": str(error_count),
+            "X-Total-Amount": f"{total_amount:.2f}"
         }
     )
 
