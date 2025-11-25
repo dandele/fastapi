@@ -121,13 +121,14 @@ class EssoExtractor(BaseExtractor):
         """
         Pattern regex per identificare una transazione Esso.
         Formato: 07.10.25 000412 367030 CITTADUCALE 1 gasolio autotrazion 26,58 42,50 ...
+        Nota: Il campo KM può essere presente o assente.
         """
         pattern = (
             r"(\d{2}\.\d{2}\.\d{2})\s+"     # Data (DD.MM.YY)
             r"(\d{6})\s+"                   # Numero ticket
             r"(\d+)\s+"                     # Codice località
             r"([A-Z\s]+?)\s+"               # Nome località
-            r"(\d+)\s+"                     # Km (opzionale)
+            r"(\d+)?\s*"                    # Km (opzionale - può essere assente)
             r"gasolio\s+autotrazion\s+"     # Prodotto
             r"([\d,]+)\s+"                  # Quantità
             r"([\d,]+)"                     # Importo
@@ -143,20 +144,23 @@ class EssoExtractor(BaseExtractor):
         numero_ticket = match.group(2)
         codice_localita = match.group(3)
         localita = match.group(4).strip()
-        km = int(match.group(5)) if match.group(5) else 0
+        # Gruppo 5 è KM - può essere None se assente
+        km_raw = match.group(5)
+        km = int(km_raw) if km_raw else 0
         quantita_raw = match.group(6)
-        importo_raw = match.group(7)
 
         quantita = self.normalizza_numero(quantita_raw)
-        importo = self.normalizza_numero(importo_raw)
+
+        # Estrai l'ULTIMO importo dalla riga (Totale incl. IVA EUR)
+        # Formato tipico: ... quantità imp_ticket prezzo_pompa sconto totale_iva
+        importi = re.findall(r"[\d,]+", line)
+        # L'ultimo importo è il totale con IVA
+        importo = self.normalizza_numero(importi[-1]) if importi else 0.0
 
         # Estrai ora se presente nella riga (non sempre catturata nel pattern)
         # Alcune fatture Esso non hanno l'ora, usiamo un default
         ora = "00:00"
 
-        # Cerca prezzo unitario nella riga
-        # Formato tipico: quantità importo prezzo_pompa sconto prezzo_netto
-        prezzi = re.findall(r"[\d,]+", line)
         prezzo_unitario = importo / quantita if quantita > 0 else 0.0
 
         return {

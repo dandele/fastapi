@@ -1,6 +1,6 @@
 """
-Estrattore per fatture IP Plus.
-Basato sulla logica esistente del main.py originale.
+Estrattore per fatture Tamoil Italia S.p.A.
+Gestisce il formato specifico delle fatture Tamoil mycard.
 """
 import re
 from typing import List, Dict, Any
@@ -9,20 +9,20 @@ from .base_extractor import BaseExtractor
 from models.invoice_models import Transaction
 
 
-class IPExtractor(BaseExtractor):
-    """Estrattore specifico per fatture IP Plus"""
+class TamoilExtractor(BaseExtractor):
+    """Estrattore specifico per fatture Tamoil"""
 
     def __init__(self):
         super().__init__()
-        self.fornitore = "IP"
+        self.fornitore = "TAMOIL"
 
     def can_handle(self, pdf_text: str) -> bool:
-        """Verifica se il PDF è una fattura IP Plus"""
-        indicators = ["IP PLUS S.R.L", "IP PLUS", "IP Plus"]
+        """Verifica se il PDF è una fattura Tamoil"""
+        indicators = ["TAMOIL ITALIA S.p.A.", "TAMOIL", "mycard"]
         return any(indicator in pdf_text for indicator in indicators)
 
     def extract_invoice_header(self, pdf) -> Dict[str, Any]:
-        """Estrae i dati dell'intestazione della fattura IP"""
+        """Estrae i dati dell'intestazione della fattura Tamoil"""
         text = self.get_pdf_text(pdf)
 
         header = {
@@ -34,33 +34,38 @@ class IPExtractor(BaseExtractor):
             "totale_fattura": 0.0
         }
 
-        # Estrai numero fattura
-        match_nr = re.search(r"Nr:\s*(\d+)", text)
+        # Estrai numero fattura (formato: DA25191152)
+        match_nr = re.search(r"Fattura N[°\s]*\s*(\w+)", text, re.IGNORECASE)
         if match_nr:
             header["numero_fattura"] = match_nr.group(1)
 
         # Estrai data fattura
-        match_data = re.search(r"Data:\s*(\d{2}/\d{2}/\d{4})", text)
+        match_data = re.search(r"Data fattura\s*(\d{2}/\d{2}/\d{4})", text)
         if match_data:
             header["data_fattura"] = match_data.group(1)
 
-        # Estrai totali
-        match_acquisti = re.search(r"Acquisti del periodo:\s*EUR\s*([\d.,]+)", text)
-        if match_acquisti:
-            header["totale_imponibile"] = self.normalizza_numero(match_acquisti.group(1))
+        # Estrai cliente
+        match_cliente = re.search(r"Cliente:\s*Spett\.\s*([A-Z\s]+)", text)
+        if match_cliente:
+            header["cliente"] = match_cliente.group(1).strip()
 
-        match_iva = re.search(r"IVA\s*EUR\s*([\d.,]+)", text)
+        # Estrai totali
+        match_imponibile = re.search(r"Imponibile IVA\s*EUR\s*([\d.,]+)", text)
+        if match_imponibile:
+            header["totale_imponibile"] = self.normalizza_numero(match_imponibile.group(1))
+
+        match_iva = re.search(r"Importo IVA\s*EUR\s*([\d.,]+)", text)
         if match_iva:
             header["totale_iva"] = self.normalizza_numero(match_iva.group(1))
 
-        match_totale = re.search(r"Totale Importo:\s*EUR\s*([\d.,]+)", text)
+        match_totale = re.search(r"Totale Fattura.*?EUR\s*([\d.,]+)", text)
         if match_totale:
             header["totale_fattura"] = self.normalizza_numero(match_totale.group(1))
 
         return header
 
     def extract_transactions(self, pdf) -> List[Transaction]:
-        """Estrae le transazioni dalla fattura IP"""
+        """Estrae le transazioni dalla fattura Tamoil"""
         transactions = []
         transazioni_in_attesa = []
         visti = set()
@@ -74,7 +79,7 @@ class IPExtractor(BaseExtractor):
                 use_text_flow=True
             )
 
-            # Raggruppa parole per riga (basato su coordinata Y)
+            # Raggruppa parole per riga
             righe = defaultdict(list)
             for w in words:
                 righe[round(w["top"])].append(w["text"])
@@ -85,10 +90,12 @@ class IPExtractor(BaseExtractor):
                 if not line:
                     continue
 
-                # Cerca targa
-                targa = self._estrai_targa(line)
-                if targa:
+                # Cerca targa nella riga totale carta
+                # Formato: "Totale Carta 7083651392996570 Targa FK444ZJ"
+                match_targa = re.search(r"Targa\s+([A-Z]{2}\d{3}[A-Z]{2})", line)
+                if match_targa:
                     # Assegna targa alle transazioni in attesa
+                    targa = match_targa.group(1)
                     for trans_dict in transazioni_in_attesa:
                         trans_dict["targa"] = targa
                         key = (
@@ -104,7 +111,8 @@ class IPExtractor(BaseExtractor):
                     targa_corrente = targa
                     continue
 
-                # Cerca transazione
+                # Cerca transazioni
+                # Formato: S 8478 SACROFANO (RM) 674676 01/10/2025 09:55 1 Gasolio Self LT 61,92 101,49
                 match_txn = self._trova_transazione(line)
                 if match_txn:
                     try:
@@ -124,77 +132,55 @@ class IPExtractor(BaseExtractor):
         return transactions
 
     def _trova_transazione(self, line: str):
-        """Pattern regex per identificare una transazione IP"""
+        """
+        Pattern regex per identificare una transazione Tamoil.
+        Formato: S 8478 SACROFANO (RM) 674676 01/10/2025 09:55 1 Gasolio Self LT 61,92 101,49
+        """
         pattern = (
-            r"^(\d{2}/\d{2}/\d{2})\s+"     # Data
-            r"(\d{2}:\d{2})\s+"            # Ora
-            r"(\d{8})\s+"                  # Numero scontrino
-            r"(\d{5})\s+"                  # Codice PV
-            r"(.+?)\s+"                    # Località
-            r"(\d{1,3}(?:\.\d{3})*|1)\s+"  # Chilometraggio
-            r"0000\s+"                     # Codice fisso
-            r"([A-Z]+(?:\s+[A-Z]+)?)\s+"   # Prodotto generico (es: GASOLIO, METANO, GASOLIO SELF)
-            r"([\d,]+)"                    # Quantità (litri/kg)
+            r"^S\s+"                            # Nota (S = Self pre-pay)
+            r"(\d+)\s+"                         # Codice PV
+            r"([A-Z\s()]+?)\s+"                 # Località (può contenere parentesi)
+            r"(\d+)\s+"                         # N° Autorizzazione (numero scontrino)
+            r"(\d{2}/\d{2}/\d{4})\s+"          # Data (DD/MM/YYYY)
+            r"(\d{2}:\d{2})\s+"                # Ora
+            r"(\d+)\s+"                         # KM
+            r"(.+?)\s+"                         # Prodotto (es: Gasolio Self, Gasolio)
+            r"LT\s+"                            # Unità di misura (sempre LT)
+            r"([\d,]+)\s+"                      # Quantità
+            r"([\d,]+)"                         # Importo
         )
         return re.search(pattern, line)
 
-    def _estrai_targa(self, line: str) -> str:
-        """Estrae la targa italiana dal testo"""
-        pattern = r"TARGA\s+([A-Z]{2}[0-9]{3}[A-Z]{2})"
-        match = re.search(pattern, line)
-        return match.group(1) if match else None
-
-    def _estrai_importo_finale(self, line: str) -> float:
-        """Estrae l'importo finale dalla riga"""
-        importi = re.findall(r"\d+,\d+", line)
-        return self.normalizza_numero(importi[-1]) if importi else 0.0
-
-    def _valida_chilometraggio(self, raw: str) -> int:
-        """Valida e converte il chilometraggio"""
-        try:
-            km = int(raw.replace('.', ''))
-            if km > 10_000_000:
-                return 0
-            return km
-        except Exception:
-            return 0
-
-    def _determina_tipo_gasolio(self, line: str) -> str:
-        """Determina il tipo di gasolio"""
-        if "GASOLIO SELF" in line:
-            return "esterno"
-        elif "GASOLIO" in line:
-            return "esterno"
-        return "esterno"
-
     def _parse_transaction(self, match, line: str) -> Dict[str, Any]:
         """Converte il match regex in un dizionario per Transaction"""
-        data = match.group(1)
-        ora = match.group(2)
-        numero_scontrino = match.group(3)
-        codice_pv = match.group(4)
-        localita_raw = match.group(5)
-        chilometraggio_raw = match.group(6)
-        prodotto_raw = match.group(7)  # Prodotto catturato dal pattern
-        quantita_raw = match.group(8)  # Litri/Kg
+        codice_pv = match.group(1)
+        localita_raw = match.group(2)
+        numero_autorizzazione = match.group(3)
+        data = match.group(4)
+        ora = match.group(5)
+        km_raw = match.group(6)
+        prodotto_raw = match.group(7)
+        quantita_raw = match.group(8)
+        importo_raw = match.group(9)
 
-        localita = localita_raw.strip().rstrip(',')
-        chilometraggio = self._valida_chilometraggio(chilometraggio_raw)
+        localita = localita_raw.strip()
+        km = int(km_raw) if km_raw and km_raw != "1" else 0  # "1" indica KM non inseriti
+        prodotto = prodotto_raw.strip()
         quantita = self.normalizza_numero(quantita_raw)
-        importo_totale = self._estrai_importo_finale(line)
-        prodotto = prodotto_raw.strip()  # Usa il prodotto catturato dal regex
+        importo = self.normalizza_numero(importo_raw)
+        prezzo_unitario = importo / quantita if quantita > 0 else 0.0
 
         return {
             "data": data,
             "ora": ora,
-            "numero_scontrino": numero_scontrino,
+            "numero_scontrino": numero_autorizzazione,
             "codice_sede": codice_pv,
             "localita": localita,
             "targa": "",  # Verrà assegnata dopo
-            "chilometraggio": chilometraggio,
-            "prodotto": prodotto,  # Prodotto generico (GASOLIO, GASOLIO SELF, METANO, ecc.)
+            "chilometraggio": km,
+            "prodotto": prodotto,
             "quantita": quantita,
-            "prezzo_unitario": importo_totale / quantita if quantita > 0 else 0.0,
-            "importo_totale": importo_totale,
-            "fornitore": "IP"
+            "prezzo_unitario": prezzo_unitario,
+            "importo_totale": importo,
+            "fornitore": "TAMOIL"
         }

@@ -8,6 +8,7 @@ from .base_extractor import BaseExtractor
 from .ip_extractor import IPExtractor
 from .esso_extractor import EssoExtractor
 from .q8_extractor import Q8Extractor
+from .tamoil_extractor import TamoilExtractor
 
 
 class ExtractorFactory:
@@ -19,7 +20,8 @@ class ExtractorFactory:
     EXTRACTORS = [
         IPExtractor,
         EssoExtractor,
-        Q8Extractor
+        Q8Extractor,
+        TamoilExtractor
     ]
 
     @classmethod
@@ -49,7 +51,7 @@ class ExtractorFactory:
             # Nessun estrattore trovato
             raise ValueError(
                 "Tipo di fattura non riconosciuto. "
-                "Formati supportati: IP Plus, Esso, Q8"
+                "Formati supportati: IP Plus, Esso, Q8, Tamoil"
             )
 
         except Exception as e:

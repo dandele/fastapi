@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="BeeBus Fatture Extractor - Estrazione automatica dati da fatture carburante">
+    <title>BeeBus Fatture Extractor</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="logo">
+                <!-- <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect width="32" height="32" rx="8" fill="url(#gradient)"/>
+                    <path d="M16 8L22 12V20L16 24L10 20V12L16 8Z" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <defs>
+                        <linearGradient id="gradient" x1="0" y1="0" x2="32" y2="32">
+                            <stop offset="0%" stop-color="#667eea"/>
+                            <stop offset="100%" stop-color="#764ba2"/>
+                        </linearGradient>
+                    </defs>
+                </svg> -->
+                <span>BeeBus Fatture Extractor</span>
+            </div>
+            <div class="header-info">
+                <span class="badge">v2.0</span>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Info Card -->
+            <div class="info-card">
+                <h1>Estrazione Automatica Fatture Carburante</h1>
+                <p>Carica una o più fatture PDF (IP, Esso, Q8, Tamoil) e scarica un CSV unificato con tutti i dati estratti.</p>
+            </div>
+
+            <!-- Upload Area -->
+            <div class="upload-section">
+                <div id="dropZone" class="drop-zone">
+                    <svg class="upload-icon" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="17 8 12 3 7 8"></polyline>
+                        <line x1="12" y1="3" x2="12" y2="15"></line>
+                    </svg>
+                    <h3>Trascina qui i file PDF</h3>
+                    <p>oppure clicca per selezionarli</p>
+                    <input type="file" id="fileInput" multiple accept=".pdf" hidden>
+                    <button class="btn-select" onclick="event.stopPropagation(); document.getElementById('fileInput').click()">
+                        Seleziona File
+                    </button>
+                    <p class="file-info">Formati: PDF • Max 10 file • Max 50MB per file</p>
+                </div>
+
+                <!-- Files List -->
+                <div id="filesList" class="files-list" style="display: none;">
+                    <div class="files-header">
+                        <h4>File caricati (<span id="fileCount">0</span>)</h4>
+                        <button class="btn-clear" onclick="clearFiles()">Rimuovi tutti</button>
+                    </div>
+                    <div id="filesContainer" class="files-container"></div>
+                </div>
+
+                <!-- Action Buttons -->
+                <div id="actionButtons" class="action-buttons" style="display: none;">
+                    <button class="btn-secondary" onclick="clearFiles()">Annulla</button>
+                    <button class="btn-primary" onclick="uploadFiles()">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="7 10 12 15 17 10"></polyline>
+                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                        </svg>
+                        Estrai Dati e Scarica CSV
+                    </button>
+                </div>
+            </div>
+
+            <!-- Progress Section -->
+            <div id="progressSection" class="progress-section" style="display: none;">
+                <div class="progress-header">
+                    <h4>Elaborazione in corso...</h4>
+                    <span id="progressText">0%</span>
+                </div>
+                <div class="progress-bar">
+                    <div id="progressFill" class="progress-fill"></div>
+                </div>
+                <p id="progressMessage" class="progress-message">Caricamento file...</p>
+            </div>
+
+            <!-- Results Section -->
+            <div id="resultsSection" class="results-section" style="display: none;">
+                <div class="result-card success">
+                    <div class="result-icon">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                            <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                        </svg>
+                    </div>
+                    <h3>Estrazione Completata con Successo!</h3>
+                    <p class="success-message">Il file CSV è stato scaricato correttamente.</p>
+                    <div class="result-actions">
+                        <button class="btn-primary" onclick="location.reload()">
+                            Carica Altre Fatture
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Error Section -->
+            <div id="errorSection" class="error-section" style="display: none;">
+                <div class="result-card error">
+                    <div class="result-icon error">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="15" y1="9" x2="9" y2="15"></line>
+                            <line x1="9" y1="9" x2="15" y2="15"></line>
+                        </svg>
+                    </div>
+                    <h3>Errore durante l'estrazione</h3>
+                    <p id="errorMessage" class="error-message"></p>
+                    <button class="btn-secondary" onclick="location.reload()">Riprova</button>
+                </div>
+            </div>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>&copy; 2025 BeeBus SPA - Estrazione Automatica Fatture Carburante</p>
+            <div class="footer-links">
+                <a href="#" onclick="showApiInfo()">Info API</a>
+                <a href="#" onclick="showSupport()">Supporto</a>
+            </div>
+        </footer>
+    </div>
+
+    <!-- Config & App Script -->
+    <script src="config.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
