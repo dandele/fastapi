@@ -123,7 +123,7 @@ class ExtractorFactory:
                 "Litri": transaction.quantita,
                 "Importo_Totale": transaction.importo_totale,
                 "Fornitore": transaction.fornitore,
-                "Tipo_Rifornimento": "esterno",  # Default per compatibilità
+                "Tipo_Rifornimento": transaction.prodotto,
                 "Numero_Scontrino": transaction.numero_scontrino,
                 "Localita": transaction.localita
             }

@@ -121,6 +121,11 @@ class BaseExtractor(ABC):
             )
 
     @staticmethod
+    def normalizza_prodotto(stringa: str) -> str:
+        """Normalizza il nome prodotto: strip + uppercase."""
+        return stringa.strip().upper() if stringa else ""
+
+    @staticmethod
     def normalizza_numero(stringa: str) -> float:
         """
         Converte una stringa numerica in formato europeo (1.234,56) in float.

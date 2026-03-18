@@ -165,7 +165,7 @@ class TamoilExtractor(BaseExtractor):
 
         localita = localita_raw.strip()
         km = int(km_raw) if km_raw and km_raw != "1" else 0  # "1" indica KM non inseriti
-        prodotto = prodotto_raw.strip()
+        prodotto = self.normalizza_prodotto(prodotto_raw)
         quantita = self.normalizza_numero(quantita_raw)
         importo = self.normalizza_numero(importo_raw)
         prezzo_unitario = importo / quantita if quantita > 0 else 0.0

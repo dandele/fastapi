@@ -182,7 +182,7 @@ class IPExtractor(BaseExtractor):
         chilometraggio = self._valida_chilometraggio(chilometraggio_raw)
         quantita = self.normalizza_numero(quantita_raw)
         importo_totale = self._estrai_importo_finale(line)
-        prodotto = prodotto_raw.strip()  # Usa il prodotto catturato dal regex
+        prodotto = self.normalizza_prodotto(prodotto_raw)
 
         return {
             "data": data,

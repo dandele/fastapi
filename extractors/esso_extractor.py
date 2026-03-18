@@ -15,6 +15,17 @@ class EssoExtractor(BaseExtractor):
     def __init__(self):
         super().__init__()
         self.fornitore = "ESSO"
+        self._pattern_transazione = re.compile(
+            r"(\d{2}\.\d{2}\.\d{2})\s+"     # Data (DD.MM.YY)
+            r"(\d{6})\s+"                   # Numero ticket
+            r"(\d+)\s+"                     # Codice località
+            r"([A-Z\s]+?)\s+"               # Nome località
+            r"(\d+)?\s*"                    # Km (opzionale)
+            r"(gasolio\s+autotrazion)\s+"   # Prodotto
+            r"([\d,]+)\s+"                  # Quantità
+            r"([\d,]+)",                    # Importo
+            re.IGNORECASE
+        )
 
     def can_handle(self, pdf_text: str) -> bool:
         """Verifica se il PDF è una fattura Esso"""
@@ -123,17 +134,7 @@ class EssoExtractor(BaseExtractor):
         Formato: 07.10.25 000412 367030 CITTADUCALE 1 gasolio autotrazion 26,58 42,50 ...
         Nota: Il campo KM può essere presente o assente.
         """
-        pattern = (
-            r"(\d{2}\.\d{2}\.\d{2})\s+"     # Data (DD.MM.YY)
-            r"(\d{6})\s+"                   # Numero ticket
-            r"(\d+)\s+"                     # Codice località
-            r"([A-Z\s]+?)\s+"               # Nome località
-            r"(\d+)?\s*"                    # Km (opzionale - può essere assente)
-            r"gasolio\s+autotrazion\s+"     # Prodotto
-            r"([\d,]+)\s+"                  # Quantità
-            r"([\d,]+)"                     # Importo
-        )
-        return re.search(pattern, line, re.IGNORECASE)
+        return self._pattern_transazione.search(line)
 
     def _parse_transaction(self, match, line: str, targa: str) -> Dict[str, Any]:
         """Converte il match regex in un dizionario per Transaction"""
@@ -147,7 +148,8 @@ class EssoExtractor(BaseExtractor):
         # Gruppo 5 è KM - può essere None se assente
         km_raw = match.group(5)
         km = int(km_raw) if km_raw else 0
-        quantita_raw = match.group(6)
+        prodotto_raw = match.group(6)
+        quantita_raw = match.group(7)
 
         quantita = self.normalizza_numero(quantita_raw)
 
@@ -171,7 +173,7 @@ class EssoExtractor(BaseExtractor):
             "localita": localita,
             "targa": targa,
             "chilometraggio": km,
-            "prodotto": "GASOLIO",
+            "prodotto": self.normalizza_prodotto(prodotto_raw),
             "quantita": quantita,
             "prezzo_unitario": prezzo_unitario,
             "importo_totale": importo,
