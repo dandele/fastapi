@@ -1,6 +1,5 @@
 """
-Estrattore per fatture Esso (WEX Europe Services).
-Gestisce il formato specifico delle fatture Esso Card.
+Estrattore per fatture WEX (ex Esso) — WEX Europe Services SRL.
 """
 import re
 from typing import List, Dict, Any
@@ -10,30 +9,33 @@ from models.invoice_models import Transaction
 
 
 class EssoExtractor(BaseExtractor):
-    """Estrattore specifico per fatture Esso"""
+    """Estrattore per fatture WEX Europe Services (ex Esso)"""
 
     def __init__(self):
         super().__init__()
-        self.fornitore = "ESSO"
+        self.fornitore = "WEX"
+        # Formato WEX:
+        # DD.MM.YY TICKET DI <7-digit-code><LOCALITY NAME> TARGA [KM] prodotto qty ...
+        # Esempio: 03.04.26 001621 DI 1452020MAGLIANO EM647VW 385756 gasolio autotrazion 122,18 263,79 ...
+        # Esempio (senza KM): 13.04.26 007089 DI 1451479RIGNANO F FS549TP gasolio autotrazion 41,39 91,02 ...
         self._pattern_transazione = re.compile(
-            r"(\d{2}\.\d{2}\.\d{2})\s+"     # Data (DD.MM.YY)
-            r"(\d{6})\s+"                   # Numero ticket
-            r"(\d+)\s+"                     # Codice località
-            r"([A-Z\s]+?)\s+"               # Nome località
-            r"(\d+)?\s*"                    # Km (opzionale)
-            r"(gasolio\s+autotrazion)\s+"   # Prodotto
-            r"([\d,]+)\s+"                  # Quantità
-            r"([\d,]+)",                    # Importo
+            r"(\d{2}\.\d{2}\.\d{2})\s+"            # Data DD.MM.YY       (gruppo 1)
+            r"(\d{5,6})\s+"                         # Ticket              (gruppo 2)
+            r"DI\s+"                                # Literal "DI"
+            r"\d{7}"                                # Codice località (non catturato)
+            r"([A-Z][A-Z ]*?)\s+"                   # Nome località       (gruppo 3)
+            r"([A-Z]{2}\d{3}[A-Z]{2})\s+"          # Targa               (gruppo 4)
+            r"(?:(\d+)\s+)?"                        # KM opzionale        (gruppo 5)
+            r"([A-Za-z]\S*(?:\s+[A-Za-z.]\S*)?)\s+"  # Prodotto 1-2 parole (gruppo 6)
+            r"([\d,]+)",                            # Quantità            (gruppo 7)
             re.IGNORECASE
         )
 
     def can_handle(self, pdf_text: str) -> bool:
-        """Verifica se il PDF è una fattura Esso"""
         indicators = ["WEX Europe Services", "ESSO CARD", "essocard"]
         return any(indicator in pdf_text for indicator in indicators)
 
     def extract_invoice_header(self, pdf) -> Dict[str, Any]:
-        """Estrae i dati dell'intestazione della fattura Esso"""
         text = self.get_pdf_text(pdf)
 
         header = {
@@ -45,25 +47,14 @@ class EssoExtractor(BaseExtractor):
             "totale_fattura": 0.0
         }
 
-        # Estrai numero fattura (formato: 00573119)
         match_nr = re.search(r"Fattura No\s*:\s*(\d+)", text, re.IGNORECASE)
         if match_nr:
             header["numero_fattura"] = match_nr.group(1)
 
-        # Estrai data fattura
         match_data = re.search(r"Data\s*:\s*(\d{2}\.\d{2}\.\d{4})", text)
         if match_data:
-            # Converti formato DD.MM.YYYY a DD/MM/YYYY
-            data_raw = match_data.group(1)
-            header["data_fattura"] = data_raw.replace('.', '/')
+            header["data_fattura"] = match_data.group(1).replace('.', '/')
 
-        # Estrai cliente
-        match_cliente = re.search(r"Cliente\s*:\s*([A-Z\s]+)", text)
-        if match_cliente:
-            header["cliente"] = match_cliente.group(1).strip()
-
-        # Estrai totali dalla tabella riepilogo
-        # Cerca pattern: TOTALE: <importo> <iva> <totale>
         match_totale = re.search(r"TOTALE:\s*([\d.,]+)\s*([\d.,]+)\s*([\d.,]+)", text)
         if match_totale:
             header["totale_imponibile"] = self.normalizza_numero(match_totale.group(1))
@@ -73,17 +64,10 @@ class EssoExtractor(BaseExtractor):
         return header
 
     def extract_transactions(self, pdf) -> List[Transaction]:
-        """Estrae le transazioni dalla fattura Esso"""
         transactions = []
         visti = set()
-        targa_corrente = None
 
-        for page_num, page in enumerate(pdf.pages):
-            # Salta la prima pagina (riepilogo) e l'ultima (totali)
-            if page_num == 0:
-                # Cerca comunque le transazioni anche nella prima pagina
-                pass
-
+        for page in pdf.pages:
             words = page.extract_words(
                 x_tolerance=3,
                 y_tolerance=3,
@@ -91,85 +75,52 @@ class EssoExtractor(BaseExtractor):
                 use_text_flow=True
             )
 
-            # Raggruppa parole per riga
             righe = defaultdict(list)
             for w in words:
                 righe[round(w["top"])].append(w["text"])
 
-            # Processa ogni riga
             for top in sorted(righe.keys()):
                 line = " ".join(righe[top]).strip()
                 if not line:
                     continue
 
-                # Cerca intestazione carta con targa
-                # Formato: "Carta: 078 FH682DD 7033166200912540788"
-                match_carta = re.search(r"Carta:\s*\d+\s+([A-Z]{2}\d{3}[A-Z]{2})", line)
-                if match_carta:
-                    targa_corrente = match_carta.group(1)
-                    continue
-
-                # Cerca transazioni
-                # Formato: DD.MM.YY NNNNNN LOCALITÀ KM gasolio autotrazion QQ,QQ PP,PP ...
-                match_txn = self._trova_transazione(line)
-                if match_txn and targa_corrente:
+                match_txn = self._pattern_transazione.search(line)
+                if match_txn:
                     try:
-                        trans_dict = self._parse_transaction(match_txn, line, targa_corrente)
-                        key = (
-                            trans_dict["data"],
-                            trans_dict["ora"],
-                            trans_dict["numero_scontrino"]
-                        )
+                        trans_dict = self._parse_transaction(match_txn, line)
+                        key = (trans_dict["data"], trans_dict["ora"], trans_dict["numero_scontrino"])
                         if key not in visti:
                             visti.add(key)
                             transactions.append(Transaction(**trans_dict))
-                    except Exception as e:
+                    except Exception:
                         continue
 
         return transactions
 
-    def _trova_transazione(self, line: str):
-        """
-        Pattern regex per identificare una transazione Esso.
-        Formato: 07.10.25 000412 367030 CITTADUCALE 1 gasolio autotrazion 26,58 42,50 ...
-        Nota: Il campo KM può essere presente o assente.
-        """
-        return self._pattern_transazione.search(line)
-
-    def _parse_transaction(self, match, line: str, targa: str) -> Dict[str, Any]:
-        """Converte il match regex in un dizionario per Transaction"""
-        data_raw = match.group(1)  # DD.MM.YY
-        # Converti a DD/MM/YY
+    def _parse_transaction(self, match, line: str) -> Dict[str, Any]:
+        data_raw = match.group(1)
         data = data_raw.replace('.', '/')
 
         numero_ticket = match.group(2)
-        codice_localita = match.group(3)
-        localita = match.group(4).strip()
-        # Gruppo 5 è KM - può essere None se assente
+        localita = match.group(3).strip()
+        targa = match.group(4)
         km_raw = match.group(5)
-        km = int(km_raw) if km_raw else 0
+        km = int(km_raw) if km_raw and int(km_raw) < 10_000_000 else 0
         prodotto_raw = match.group(6)
         quantita_raw = match.group(7)
-
         quantita = self.normalizza_numero(quantita_raw)
 
-        # Estrai l'ULTIMO importo dalla riga (Totale incl. IVA EUR)
-        # Formato tipico: ... quantità imp_ticket prezzo_pompa sconto totale_iva
+        # Ultimo importo nella riga = Totale incl. IVA
         importi = re.findall(r"[\d,]+", line)
-        # L'ultimo importo è il totale con IVA
         importo = self.normalizza_numero(importi[-1]) if importi else 0.0
-
-        # Estrai ora se presente nella riga (non sempre catturata nel pattern)
-        # Alcune fatture Esso non hanno l'ora, usiamo un default
-        ora = "00:00"
 
         prezzo_unitario = importo / quantita if quantita > 0 else 0.0
 
         return {
             "data": data,
-            "ora": ora,
+            "ora": "00:00",
             "numero_scontrino": numero_ticket,
-            "codice_sede": codice_localita,
+            "codice_sede": "",
             "localita": localita,
             "targa": targa,
             "chilometraggio": km,
@@ -177,5 +128,5 @@ class EssoExtractor(BaseExtractor):
             "quantita": quantita,
             "prezzo_unitario": prezzo_unitario,
             "importo_totale": importo,
-            "fornitore": "ESSO"
+            "fornitore": "WEX"
         }

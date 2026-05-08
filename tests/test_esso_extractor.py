@@ -1,129 +1,100 @@
 """
-Test suite per EssoExtractor
-Verifica fix per estrazione importo con IVA (ultimo importo della riga)
+Test suite per EssoExtractor — formato WEX Europe Services SRL.
 """
 import pytest
 import re
 from extractors.esso_extractor import EssoExtractor
 
+WEX_LINE_WITH_KM = (
+    "03.04.26 001621 DI 1452020MAGLIANO EM647VW 385756 gasolio autotrazion "
+    "122,18 263,79 215,90 176,97 216,22 22,00 47,57 263,79"
+)
+WEX_LINE_WITHOUT_KM = (
+    "13.04.26 007089 DI 1451479RIGNANO F FS549TP gasolio autotrazion "
+    "41,39 91,02 219,91 180,26 74,61 22,00 16,41 91,02"
+)
+WEX_LINE_UNLEADED = (
+    "09.04.26 000571 DI 1451899RIETI FK444ZJ 1 Unleaded "
+    "68,88 148,64 215,80 176,89 121,84 22,00 26,81 148,65"
+)
+
 
 class TestEssoExtractor:
-    """Test per l'estrattore Esso"""
+    """Test per l'estrattore WEX (ex Esso)"""
 
     @pytest.fixture
     def extractor(self):
-        """Fixture che restituisce un'istanza di EssoExtractor"""
         return EssoExtractor()
 
-    def test_can_handle_esso_text(self, extractor):
-        """Verifica che can_handle riconosca testo Esso"""
-        esso_text = "WEX Europe Services - ESSO CARD"
-        assert extractor.can_handle(esso_text) is True
+    def test_can_handle_wex_text(self, extractor):
+        assert extractor.can_handle("WEX Europe Services SRL") is True
 
-    def test_trova_transazione_with_km(self, extractor):
-        """Verifica pattern regex per transazione con KM"""
-        line = "07.10.25 000412 367030 CITTADUCALE 26 gasolio autotrazion 26,58 42,50 1,600 0,00 1,600 42,50"
-        match = extractor._trova_transazione(line)
+    def test_can_handle_essocard_legacy(self, extractor):
+        assert extractor.can_handle("WEX Europe Services - ESSO CARD") is True
 
+    def test_pattern_matches_with_km(self, extractor):
+        match = extractor._pattern_transazione.search(WEX_LINE_WITH_KM)
         assert match is not None
-        assert match.group(1) == "07.10.25"  # Data
-        assert match.group(2) == "000412"  # Numero ticket
-        assert match.group(3) == "367030"  # Codice località
-        assert match.group(4) == "CITTADUCALE"  # Località
-        assert match.group(5) == "26"  # KM
-        assert match.group(6) == "gasolio autotrazion"  # Prodotto (catturato)
-        assert match.group(7) == "26,58"  # Quantità
+        assert match.group(1) == "03.04.26"
+        assert match.group(2) == "001621"
+        assert match.group(3) == "MAGLIANO"
+        assert match.group(4) == "EM647VW"
+        assert match.group(5) == "385756"
+        assert match.group(7) == "122,18"
 
-    def test_trova_transazione_without_km(self, extractor):
-        """Verifica pattern regex per transazione SENZA KM (fix)"""
-        line = "03.10.25 006241 350749 RIGNANO FLAMI gasolio autotrazion 61,63 106,56 1,729 0,00 1,729 106,56"
-        match = extractor._trova_transazione(line)
-
+    def test_pattern_matches_without_km(self, extractor):
+        match = extractor._pattern_transazione.search(WEX_LINE_WITHOUT_KM)
         assert match is not None
-        assert match.group(1) == "03.10.25"  # Data
-        assert match.group(2) == "006241"  # Numero ticket
-        assert match.group(3) == "350749"  # Codice località
-        assert match.group(4) == "RIGNANO FLAMI"  # Località
-        assert match.group(5) is None  # KM assente
-        assert match.group(6) == "gasolio autotrazion"  # Prodotto (catturato)
-        assert match.group(7) == "61,63"  # Quantità
+        assert match.group(1) == "13.04.26"
+        assert match.group(2) == "007089"
+        assert match.group(3) == "RIGNANO F"
+        assert match.group(4) == "FS549TP"
+        assert match.group(5) is None
+        assert match.group(7) == "41,39"
 
-    def test_trova_transazione_captures_product(self, extractor):
-        """Verifica che il prodotto venga catturato dinamicamente dal pattern"""
-        line = "07.10.25 000412 367030 CITTADUCALE 26 gasolio autotrazion 26,58 42,50 1,600 0,00 1,600 42,50"
-        match = extractor._trova_transazione(line)
-
+    def test_pattern_matches_unleaded(self, extractor):
+        match = extractor._pattern_transazione.search(WEX_LINE_UNLEADED)
         assert match is not None
-        assert match.group(6) == "gasolio autotrazion"
+        assert match.group(4) == "FK444ZJ"
+        assert "unleaded" in match.group(6).lower()
 
-    def test_parse_transaction_km_present(self, extractor):
-        """Verifica parsing transazione con KM presente"""
-        line = "07.10.25 000412 367030 CITTADUCALE 26 gasolio autotrazion 26,58 42,50 1,600 0,00 1,600 42,50"
-        match = extractor._trova_transazione(line)
-        trans_dict = extractor._parse_transaction(match, line, "FP466ED")
+    def test_parse_transaction_with_km(self, extractor):
+        match = extractor._pattern_transazione.search(WEX_LINE_WITH_KM)
+        t = extractor._parse_transaction(match, WEX_LINE_WITH_KM)
+        assert t["data"] == "03/04/26"
+        assert t["numero_scontrino"] == "001621"
+        assert t["localita"] == "MAGLIANO"
+        assert t["targa"] == "EM647VW"
+        assert t["chilometraggio"] == 385756
+        assert t["quantita"] == 122.18
+        assert t["prodotto"] == "GASOLIO AUTOTRAZION"
+        assert t["fornitore"] == "WEX"
 
-        assert trans_dict["data"] == "07/10/25"
-        assert trans_dict["numero_scontrino"] == "000412"
-        assert trans_dict["codice_sede"] == "367030"
-        assert trans_dict["localita"] == "CITTADUCALE"
-        assert trans_dict["chilometraggio"] == 26
-        assert trans_dict["quantita"] == 26.58
-        assert trans_dict["targa"] == "FP466ED"
-        assert trans_dict["fornitore"] == "ESSO"
-        assert trans_dict["prodotto"] == "GASOLIO AUTOTRAZION"  # Dinamico + uppercase
-
-    def test_parse_transaction_km_absent(self, extractor):
-        """Verifica parsing transazione SENZA KM (fix)"""
-        line = "03.10.25 006241 350749 RIGNANO FLAMI gasolio autotrazion 61,63 106,56 1,729 0,00 1,729 106,56"
-        match = extractor._trova_transazione(line)
-        trans_dict = extractor._parse_transaction(match, line, "FP466ED")
-
-        assert trans_dict["data"] == "03/10/25"
-        assert trans_dict["numero_scontrino"] == "006241"
-        assert trans_dict["codice_sede"] == "350749"
-        assert trans_dict["localita"] == "RIGNANO FLAMI"
-        assert trans_dict["chilometraggio"] == 0  # Default quando assente
-        assert trans_dict["quantita"] == 61.63
-        assert trans_dict["prodotto"] == "GASOLIO AUTOTRAZION"  # Dinamico + uppercase
+    def test_parse_transaction_without_km(self, extractor):
+        match = extractor._pattern_transazione.search(WEX_LINE_WITHOUT_KM)
+        t = extractor._parse_transaction(match, WEX_LINE_WITHOUT_KM)
+        assert t["data"] == "13/04/26"
+        assert t["targa"] == "FS549TP"
+        assert t["chilometraggio"] == 0
+        assert t["quantita"] == 41.39
 
     def test_importo_totale_is_last_amount(self, extractor):
-        """
-        CRITICAL TEST: Verifica che l'importo estratto sia l'ULTIMO della riga
-        (Totale incl. IVA EUR) e NON il primo (Imp. Ticket)
-        """
-        # Riga con più importi: 42,50 (Imp. Ticket) ... 42,50 (Totale IVA)
-        line = "07.10.25 000412 367030 CITTADUCALE 26 gasolio autotrazion 26,58 42,50 1,600 0,00 1,600 42,50"
-        match = extractor._trova_transazione(line)
-        trans_dict = extractor._parse_transaction(match, line, "FP466ED")
-
-        # In questo caso sono uguali, ma il codice deve usare l'ultimo
-        assert trans_dict["importo_totale"] == 42.50
-
-        # Caso con importi diversi
-        line2 = "03.10.25 006241 350749 RIGNANO FLAMI gasolio autotrazion 61,63 100,00 1,729 5,56 1,600 106,56"
-        match2 = extractor._trova_transazione(line2)
-        trans_dict2 = extractor._parse_transaction(match2, line2, "FP466ED")
-
-        # L'importo totale deve essere 106,56 (ultimo) NON 100,00 (primo dopo quantità)
-        assert trans_dict2["importo_totale"] == 106.56
-
-    def test_extract_all_amounts_from_line(self, extractor):
-        """Verifica che findall estragga tutti gli importi dalla riga"""
-        line = "07.10.25 000412 367030 CITTADUCALE 26 gasolio autotrazion 26,58 42,50 1,600 0,00 1,600 42,50"
-        importi = re.findall(r"[\d,]+", line)
-
-        # Dovrebbero esserci molti numeri nella riga
-        assert len(importi) > 5
-        # L'ultimo deve essere il totale IVA
-        assert importi[-1] == "42,50"
+        """Importo = ultimo valore riga = Totale incl. IVA"""
+        match = extractor._pattern_transazione.search(WEX_LINE_WITH_KM)
+        t = extractor._parse_transaction(match, WEX_LINE_WITH_KM)
+        assert t["importo_totale"] == 263.79
 
     def test_fornitore_name(self, extractor):
-        """Verifica che il nome fornitore sia corretto"""
-        assert extractor.fornitore == "ESSO"
+        assert extractor.fornitore == "WEX"
+
+    def test_codice_sede_empty(self, extractor):
+        match = extractor._pattern_transazione.search(WEX_LINE_WITH_KM)
+        t = extractor._parse_transaction(match, WEX_LINE_WITH_KM)
+        assert t["codice_sede"] == ""
 
 
 class TestEssoIntegration:
-    """Test di integrazione con PDF reali Esso"""
+    """Test di integrazione con PDF reali WEX"""
 
     @pytest.fixture
     def extractor(self):
@@ -131,10 +102,9 @@ class TestEssoIntegration:
 
     @pytest.fixture
     def pdf_path(self):
-        return "/Users/mirkopapadopoli/Code/fastapi/Fatture nuove/esso del 1-10.pdf"
+        return "/Users/mirkopapadopoli/Code/PARADYGMA/fastapi/Fatture nuove/fattura wex 15-4.pdf"
 
     def test_extract_real_pdf(self, extractor, pdf_path):
-        """Test estrazione da PDF Esso reale"""
         import os
         if not os.path.exists(pdf_path):
             pytest.skip(f"PDF non trovato: {pdf_path}")
@@ -143,18 +113,13 @@ class TestEssoIntegration:
             pdf_content = f.read()
 
         from io import BytesIO
-        result = extractor.extract(BytesIO(pdf_content), "esso_test.pdf")
+        result = extractor.extract(BytesIO(pdf_content), "wex_test.pdf")
 
         assert result.status == "success"
-        assert result.fornitore == "ESSO"
+        assert result.fornitore == "WEX"
         assert result.records_count > 0
 
-    def test_extract_missing_transaction_without_km(self, extractor, pdf_path):
-        """
-        CRITICAL TEST: Verifica estrazione della transazione mancante
-        Transazione senza KM che prima non veniva estratta:
-        03.10.25 006241 350749 RIGNANO FLAMI gasolio autotrazion 61,63 106,56
-        """
+    def test_extract_all_transactions(self, extractor, pdf_path):
         import os
         if not os.path.exists(pdf_path):
             pytest.skip(f"PDF non trovato: {pdf_path}")
@@ -163,22 +128,11 @@ class TestEssoIntegration:
             pdf_content = f.read()
 
         from io import BytesIO
-        result = extractor.extract(BytesIO(pdf_content), "esso_test.pdf")
+        result = extractor.extract(BytesIO(pdf_content), "wex_test.pdf")
 
-        # Cerca la transazione specifica (numero scontrino 006241)
-        found = False
-        for trans in result.invoice_data.transactions:
-            if trans.numero_scontrino == "006241":
-                found = True
-                assert trans.localita == "RIGNANO FLAMI"
-                assert trans.quantita == 61.63
-                assert trans.chilometraggio == 0  # KM assente
-                break
+        assert result.records_count == 39
 
-        assert found, "Transazione 006241 (senza KM) non trovata!"
-
-    def test_all_amounts_are_with_iva(self, extractor, pdf_path):
-        """Verifica che tutti gli importi siano quelli con IVA (ultimo della riga)"""
+    def test_all_amounts_positive(self, extractor, pdf_path):
         import os
         if not os.path.exists(pdf_path):
             pytest.skip(f"PDF non trovato: {pdf_path}")
@@ -187,8 +141,25 @@ class TestEssoIntegration:
             pdf_content = f.read()
 
         from io import BytesIO
-        result = extractor.extract(BytesIO(pdf_content), "esso_test.pdf")
+        result = extractor.extract(BytesIO(pdf_content), "wex_test.pdf")
 
-        # Tutte le transazioni devono avere importo > 0
         for trans in result.invoice_data.transactions:
-            assert trans.importo_totale > 0, f"Importo zero per scontrino {trans.numero_scontrino}"
+            assert trans.importo_totale > 0, f"Importo zero: scontrino {trans.numero_scontrino}"
+
+    def test_unleaded_transaction_extracted(self, extractor, pdf_path):
+        """CRITICAL: transazione Unleaded (benzina) non deve essere persa"""
+        import os
+        if not os.path.exists(pdf_path):
+            pytest.skip(f"PDF non trovato: {pdf_path}")
+
+        with open(pdf_path, 'rb') as f:
+            pdf_content = f.read()
+
+        from io import BytesIO
+        result = extractor.extract(BytesIO(pdf_content), "wex_test.pdf")
+
+        unleaded = [t for t in result.invoice_data.transactions
+                    if "UNLEADED" in t.prodotto.upper()]
+        assert len(unleaded) == 1
+        assert unleaded[0].targa == "FK444ZJ"
+        assert unleaded[0].quantita == 68.88
